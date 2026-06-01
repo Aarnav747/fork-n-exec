@@ -12,30 +12,42 @@ int input(char in_buff[], size_t size_inbuff) {
 	return 0;
 }
 
+int inbuilt_inst(char *args[], int case_no) {
+	switch(case_no) {
+		case 1:
+			if (args[1] == NULL) return -1;
+			                                        		if (chdir(args[1]) == -1) return -1;										break;
+									case 2:
+			
+	}
+		                                                return 0;                               
+}
+					
+
 int tokenizing(char in_buff[], char *args[], size_t size_args) {
 	args[0] = strtok(in_buff, " \n");
 
-	if (strcmp(args[0], "exit") == 0) return 1;
+	if (strcmp(args[0], "exit") == 0) {
+		return 1;
+	}
 
 	int i = 1;
 	for (i = 1; i < size_args; i++) {
 		char *token = strtok(NULL, " \n");
 
-		if (token == NULL) break; 
+		if (token == NULL) break;
 
 		args[i] = token;
+
+		if (token == ">" || token == "<") {
+			inbuilt_inst(args, 2);
+		}
 	}
 	args[i] = NULL;
 
-	return 0;
-}
-
-int inbuilt_inst(char *args[]) {
 	if (strcmp(args[0], "cd") == 0) {
-		printf("john");
-		if (args[1] == NULL) return -1;
-
-		if (chdir(args[1]) == -1) return -1;
+		inbuilt_inst(args);
+		return 2;
 	}
 
 	return 0;
@@ -62,23 +74,30 @@ int main() {
 	char *args[64];
 	size_t size_inbuff = 128;
 	size_t size_args = 64;
+	char cur_path[1024];
 
 	while (1) {
-		printf("#: ");
+		if (getcwd(cur_path, sizeof(cur_path)) != NULL) {
+		printf("(%s)#: ", cur_path);
 		fflush(stdout);
+
+		} else perror("getcwd() Error");
 
 		if (input(in_buff, size_inbuff) == -1) {
 			printf("input() Error");
 			break;
 		}
 
-		if (tokenizing(in_buff, args, size_args) == 1) break;
+		int tokenizing_ret = tokenizing(in_buff, args, size_args);
 
-		if (inbuilt_inst(args) == -1) {
-			printf("inbuilt_inst() Error");
+		if (tokenizing_ret == 1) {
 			break;
+		} else if (tokenizing_ret == 2) {
+			continue;
+		} else if (tokenizing_ret == -1) {
+			return -1;
 		}
-
+		
 		execute(args);
 	}
 
