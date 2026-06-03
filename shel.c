@@ -12,13 +12,35 @@ int input(char in_buff[], size_t size_inbuff) {
 	return 0;
 }
 
-int inbuilt_inst(char *args[], int case_no) {
+int inbuilt_inst(char *args[], int case_no, char *filename) {
 	switch(case_no) {
-		case 1:
+		case 1: {
 			if (args[1] == NULL) return -1;
 			                                        		if (chdir(args[1]) == -1) return -1;										break;
-									case 2:
-			
+		}
+									case 2: {
+			int fd1 = open(filename, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+	
+			if (fd1 == -1) {
+				perror("open() Error");
+				return -1;
+			}
+
+			int new_fd = dup2(fd1, STDOUT_FILENO);
+
+			if (new_fd == -1) {
+				perror("dup2() Error");
+				return -1;
+			}
+
+			if (close(fd1) == -1) {
+				perror("close() Error");
+				return -1;
+			}
+
+			break;
+		}
+						
 	}
 		                                                return 0;                               
 }
@@ -32,21 +54,26 @@ int tokenizing(char in_buff[], char *args[], size_t size_args) {
 	}
 
 	int i = 1;
+	char *token = NULL;
 	for (i = 1; i < size_args; i++) {
-		char *token = strtok(NULL, " \n");
+		token = strtok(NULL, " \n");
 
 		if (token == NULL) break;
 
 		args[i] = token;
 
-		if (token == ">" || token == "<") {
-			inbuilt_inst(args, 2);
+		if (strcmp(token, ">") == 0) {
+			token = strtok(NULL, " \n");
+			if (token == NULL) return -1;
+			args[i+1] = token;
+			args[i] = NULL;
+			inbuilt_inst(args, 2, token);
 		}
 	}
 	args[i] = NULL;
 
 	if (strcmp(args[0], "cd") == 0) {
-		inbuilt_inst(args);
+		inbuilt_inst(args, 1, NULL);
 		return 2;
 	}
 
@@ -61,7 +88,7 @@ void execute(char *args[]) {
 	} else if (child == 0) {
 		execvp(args[0], args);
 		perror("execvp() Error");
-		exit(1);
+		exit(1);	
 	} else {
 		waitpid(child, NULL, 0);
 	}
@@ -81,7 +108,11 @@ int main() {
 		printf("(%s)#: ", cur_path);
 		fflush(stdout);
 
-		} else perror("getcwd() Error");
+		} else {
+			perror("getcwd() Error");
+			printf("(?)#: ");
+			fflush(stdout);
+		}
 
 		if (input(in_buff, size_inbuff) == -1) {
 			printf("input() Error");
