@@ -4,6 +4,8 @@
 #include <sys/wait.h>
 #include <string.h>
 #include <fcntl.h>
+#include <errno.h>
+#include <signal.h>
 
 #define IN_BUFF_SIZE 128
 #define ARGS_SIZE 64
@@ -26,6 +28,12 @@ pid_t Fork() {
 	}
 
 	return pid;
+}
+
+void Execvp(char *arg_array[]) {
+	execvp(arg_array[0], arg_array);
+	perror("execvp() Error");
+	_exit(1);
 }
 
 int Dup2(int fd_var, int std_fn) {
@@ -70,9 +78,7 @@ int pipe_execute(char *pipe_out[], char *pipe_in[]) {
 		Close(pipefd[0]);
 		Close(pipefd[1]);
 
-		execvp(pipe_out[0], pipe_out);
-		perror("execvp() Error");
-		exit(1);
+		Execvp(pipe_out);
 	}
 
 	pid_t pid2 = Fork();
@@ -82,9 +88,7 @@ int pipe_execute(char *pipe_out[], char *pipe_in[]) {
 		Close(pipefd[1]);
 		Close(pipefd[0]);
 
-		execvp(pipe_in[0], pipe_in);
-		perror("execvp() Error");
-		exit(1);
+		Execvp(pipe_in);
 	} 
 
 	Close(pipefd[0]);
@@ -98,6 +102,8 @@ int pipe_execute(char *pipe_out[], char *pipe_in[]) {
 
 int tokenizing(char in_buff[], char *args[], size_t size_args) {
 	args[0] = strtok(in_buff, " \n");
+
+	if (args[0] == NULL) return -1;
 
 	if (strcmp(args[0], "exit") == 0) {
 		return 1;
@@ -141,12 +147,12 @@ int tokenizing(char in_buff[], char *args[], size_t size_args) {
 	}
 
 	if (builtin_check.output_redir == 0) {
+		builtin_check.output_redir = -1;
 		execute(args, token, STDOUT_FILENO);
-		builtin_check.input_redir = -1;
 		return 2;
 	} else if (builtin_check.input_redir == 0) {
+		builtin_check.input_redir = -1;
 		execute(args, token, STDIN_FILENO);
-		builtin_check.output_redir = -1;
 		return 2;
 	} else if (builtin_check.contains_pipe == 0) {
 		if (pipe_first_cmd[0] == NULL) {
@@ -184,7 +190,7 @@ void execute(char *args[], char* filename, int std_fn) {
 		if (std_fn == STDOUT_FILENO) {
 			fd1 = open(filename, O_CREAT | O_WRONLY | O_TRUNC, 0644);
 		} else if (std_fn == STDIN_FILENO) {
-			fd1 = open(filename, O_RDONLY, 0644);
+			fd1 = open(filename, O_RDONLY);
 		}
 
 		if (fd1 == -1) {
@@ -198,10 +204,7 @@ void execute(char *args[], char* filename, int std_fn) {
 		Close(fd1);
 	}
 
-		printf("execvp in execute");
-		execvp(args[0], args);
-		perror("execvp() Error");
-		exit(1);
+		Execvp(args);
 	} else {
 		waitpid(child, NULL, 0);
 	}
@@ -209,14 +212,21 @@ void execute(char *args[], char* filename, int std_fn) {
 	return;
 }
 
+struct sigaction sa;
 
+void sigint_handler(int sig) {}
 
 int main() {
+	sa.sa_handler = sigint_handler;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = 0;
+	sigaction(SIGINT, &sa, NULL);
+
 	char in_buff[IN_BUFF_SIZE];
 	char *args[ARGS_SIZE];
+	char cur_path[CUR_PATH_SIZE];
 	size_t size_inbuff = IN_BUFF_SIZE;
 	size_t size_args = ARGS_SIZE;
-	char cur_path[CUR_PATH_SIZE];
 	builtin_check.input_redir = -1;
 	builtin_check.output_redir = -1;
 	builtin_check.contains_pipe = -1;
@@ -232,22 +242,27 @@ int main() {
 			fflush(stdout);
 		}
 
-		if (input(in_buff, size_inbuff) == -1) {
+		int input_func_ret = input(in_buff, size_inbuff);
+
+		if (input_func_ret == -1) {
 			printf("input() Error");
 			break;
 		}
 
+		if (in_buff[0] == '\0' || in_buff[0] == '\n') continue;
+
 		int tokenizing_ret = tokenizing(in_buff, args, size_args);
 
-		if (tokenizing_ret == 1) {
-			break;
+		if (tokenizing_ret == 0) {
+			execute(args, NULL, -1);
 		} else if (tokenizing_ret == 2) {
 			continue;
 		} else if (tokenizing_ret == -1) {
 			return -1;
+		} else { 
+			break;
 		}
 		
-		execute(args, NULL, -1);
 	}
 
 	return 0;
