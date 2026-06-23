@@ -28,6 +28,16 @@ typedef struct pipe_elements {
 	char *pipe_second_cmd[2];
 } pipe_elements;
 
+typedef struct path_elements {
+	char* cur_dir;
+	char cur_path[CUR_PATH_SIZE];
+} path_elements;
+
+typedef struct args_elements {
+	char *args[ARGS_SIZE];
+	int cur_pos;
+} args_elements;
+
 io_elements io_redir = {
 	.input_redir = -1,
 	.output_redir = -1,
@@ -37,6 +47,14 @@ io_elements io_redir = {
 
 pipe_elements pipe_struct = {
 	.contains_pipe = -1
+};
+
+path_elements path_struct = {
+	.cur_dir = NULL
+};
+
+args_elements args_struct = {
+	.cur_pos = 1
 };
 
 pid_t Fork() {
@@ -92,9 +110,10 @@ int input(char in_buff[]) {
 	return 0;
 }	
 
-void execute(char *args[]);
+void execute();
+char* cur_dir_addr();
 
-int inbuilt_cmds_flow(int case_no, char *args[], int i) {
+int inbuilt_cmds_flow(int case_no) {
 	switch(case_no) {
 		case 1:
 			io_redir.output_redir = -1;
@@ -103,8 +122,10 @@ int inbuilt_cmds_flow(int case_no, char *args[], int i) {
 			break;
 
 		case 2: {
-			char* first_cmd = args[i-1];
-			char* second_cmd = args[i+1];
+			int i = args_struct.cur_pos;
+
+			char* first_cmd = args_struct.args[i-1];
+			char* second_cmd = args_struct.args[i+1];
 
 			if (arg_error_check(first_cmd) == CONTINUE_RET) {
 				return CONTINUE_RET;
@@ -115,11 +136,20 @@ int inbuilt_cmds_flow(int case_no, char *args[], int i) {
 			pipe_struct.pipe_second_cmd[0] = second_cmd;
 			pipe_struct.pipe_second_cmd[1] = NULL;
 
-			args[i] = NULL;
-			args[i+2] = NULL;
+			args_struct.args[i] = NULL;
+			args_struct.args[i+2] = NULL;
 
 			break;
 		}
+
+		case 3: 
+			if (args_struct.args[1] == NULL) return -1;
+
+			if (chdir(args_struct.args[1]) == -1) return -1;
+
+			path_struct.cur_dir = cur_dir_addr();
+
+			return CONTINUE_RET;
 
 	}
 
@@ -163,14 +193,14 @@ int pipe_execute() {
 	return CONTINUE_RET;
 }
 
-int tokenizing(char in_buff[], char *args[]) {
-	memset(args, 0, ARGS_SIZE);
+int tokenizing(char in_buff[]) {
+	memset(args_struct.args, 0, ARGS_SIZE);
 
-	args[0] = strtok(in_buff, " \n");
+	args_struct.args[0] = strtok(in_buff, " \n");
 
-	if (args[0] == NULL) return -1;
+	if (args_struct.args[0] == NULL) return -1;
 
-	if (strcmp(args[0], "exit") == 0) {
+	if (strcmp(args_struct.args[0], "exit") == 0) {
 		return EXIT_RET;
 	}
 
@@ -181,7 +211,7 @@ int tokenizing(char in_buff[], char *args[]) {
 
 		if (token == NULL) break;
 
-		args[i] = token;
+		args_struct.args[i] = token;
 
 		io_redir.output_redir = strcmp(token, ">");
 		io_redir.input_redir = strcmp(token, "<");
@@ -190,7 +220,8 @@ int tokenizing(char in_buff[], char *args[]) {
 
 		if (pipe_struct.contains_pipe == 0) {
 			token = strtok(NULL, " \n");
-			args[i+1] = token;
+			args_struct.args[i+1] = token;
+			args_struct.cur_pos = i;
 
 			break;
 
@@ -198,50 +229,44 @@ int tokenizing(char in_buff[], char *args[]) {
 			token = strtok(NULL, " \n");
 			if (arg_error_check(token) == 2) return CONTINUE_RET;
 			io_redir.filename = token;
-			args[i+1] = NULL;
-			args[i] = NULL;
+			args_struct.args[i+1] = NULL;
+			args_struct.args[i] = NULL;
+			args_struct.cur_pos = i;
 
 			break;
 		} 
 	}
 
-	if (pipe_struct.contains_pipe == 0) {
-		pipe_struct.contains_pipe = -1;
+	args_struct.args[i] = NULL;
 
-		if (inbuilt_cmds_flow(2, args, i) == 2) return CONTINUE_RET;
-
-		int pipe_ex_ret = pipe_execute();
-		return pipe_ex_ret;
-
-	} else if (io_redir.output_redir == 0) {
-		io_redir.std_fn = STDOUT_FILENO;
-		inbuilt_cmds_flow(1, args, i);
-
-		execute(args);
-		return CONTINUE_RET;
-	} else if (io_redir.input_redir == 0) {
-		io_redir.std_fn = STDIN_FILENO;
-		inbuilt_cmds_flow(1, args, i);
-
-		execute(args);
-
-		return CONTINUE_RET;
-	}
-
-	args[i] = NULL;
-
-	if (strcmp(args[0], "cd") == 0) {
-		if (args[1] == NULL) return -1;
-
-		if (chdir(args[1]) == -1) return -1;
-
-		return CONTINUE_RET;
+	if (strcmp(args_struct.args[0], "cd") == 0) {
+		if (inbuilt_cmds_flow(3) == CONTINUE_RET) return CONTINUE_RET;
 	}
 
 	return 0;
 }
 
-void execute(char *args[]) {
+void execute() {
+	if (pipe_struct.contains_pipe == 0) {
+		pipe_struct.contains_pipe = -1;
+
+		if (inbuilt_cmds_flow(2) == 2) return;
+
+		pipe_execute();
+		return;
+
+	} else if (io_redir.output_redir == 0) {
+		io_redir.std_fn = STDOUT_FILENO;
+
+		inbuilt_cmds_flow(1);
+
+	} else if (io_redir.input_redir == 0) {
+		io_redir.std_fn = STDIN_FILENO;
+
+		inbuilt_cmds_flow(1);
+
+	}
+
 	pid_t child = Fork();
 
 	if (child == 0) {
@@ -257,7 +282,6 @@ void execute(char *args[]) {
 		if (fd1 == -1) {
 			perror("open() Error");
 			exit(1);
-			return;
 		}
 
 		int new_fd = Dup2(fd1, io_redir.std_fn);
@@ -265,7 +289,7 @@ void execute(char *args[]) {
 		Close(fd1);
 	}
 
-		Execvp(args);
+		Execvp(args_struct.args);
 	} else {
 		waitpid(child, NULL, 0);
 	}
@@ -273,12 +297,12 @@ void execute(char *args[]) {
 	return;
 }
 
-char* cur_dir_addr(char cur_path[]) {
-	memset(cur_path, 0, CUR_PATH_SIZE);
+char* cur_dir_addr() {
+	memset(path_struct.cur_path, 0, CUR_PATH_SIZE);
 
-	if (getcwd(cur_path, CUR_PATH_SIZE) != NULL) {
-		char* last_slash = strrchr(cur_path, '/');
-		if ((last_slash+1) == NULL) return NULL;
+	if (getcwd(path_struct.cur_path, CUR_PATH_SIZE) != NULL) {
+		char* last_slash = strrchr(path_struct.cur_path, '/');
+		if (last_slash == NULL) return NULL;
 
 		return (last_slash + 1);
 	} else {
@@ -297,21 +321,18 @@ int main() {
 	sigaction(SIGINT, &sa, NULL);
 
 	char in_buff[IN_BUFF_SIZE];
-	char *args[ARGS_SIZE];
-	char cur_path[CUR_PATH_SIZE];
-	char* cur_dir;
+
+	path_struct.cur_dir = cur_dir_addr();
 
 	while (1) {
 		io_redir.filename = NULL;
 		io_redir.std_fn = -1;
 
-		cur_dir = cur_dir_addr(cur_path);
-
-		if (cur_dir != NULL) {
-			printf("(%s)#: ", cur_dir);
+		if (path_struct.cur_dir != NULL) {
+			printf("(%s)#: ", path_struct.cur_dir);
 			fflush(stdout);
 
-		} else if (cur_dir == NULL) {
+		} else {
 			perror("getcwd() Error");
 			printf("(?)#: ");
 			fflush(stdout);
@@ -326,10 +347,10 @@ int main() {
 
 		if (in_buff[0] == '\0' || in_buff[0] == '\n') continue;
 
-		int tokenizing_ret = tokenizing(in_buff, args);
+		int tokenizing_ret = tokenizing(in_buff);
 
 		if (tokenizing_ret == 0) {
-			execute(args);
+			execute();
 		} else if (tokenizing_ret == CONTINUE_RET) {
 			continue;
 		} else if (tokenizing_ret == ERROR_BREAK_RET) {
