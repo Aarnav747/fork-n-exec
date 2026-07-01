@@ -10,6 +10,7 @@
 #define IN_BUFF_SIZE 128
 #define ARGS_SIZE 64
 #define CUR_PATH_SIZE 1024
+#define JOBS_ARR_SIZE 128
 
 #define ERROR_BREAK_RET -1
 #define EXIT_RET 1
@@ -23,7 +24,6 @@ typedef struct io_elements {
 } io_elements;
 
 typedef struct pipe_elements {
-	int contains_pipe;
 	char *pipe_first_cmd[2];
 	char *pipe_second_cmd[2];
 } pipe_elements;
@@ -38,16 +38,24 @@ typedef struct args_elements {
 	int cur_pos;
 } args_elements;
 
+typedef struct job_elements {
+	int status;
+	pid_t pid;
+} job_elements;
+
+typedef struct flags {
+	int input_redir;
+	int output_redir;
+	int contains_pipe;
+	int contains_job;
+} flags;
+
 io_elements io_redir = {
-	.input_redir = -1,
-	.output_redir = -1,
 	.filename = NULL,
 	.std_fn = -1
 };
 
-pipe_elements pipe_struct = {
-	.contains_pipe = -1
-};
+pipe_elements pipe_struct;
 
 path_elements path_struct = {
 	.cur_dir = NULL
@@ -56,6 +64,15 @@ path_elements path_struct = {
 args_elements args_struct = {
 	.cur_pos = 1
 };
+
+flags flags_struct = {
+	.input_redir = -1,
+	.output_redir = -1,
+	.contains_pipe = -1,
+	.contains_job = -1
+};
+
+job_elements jobs_arr[JOBS_ARR_SIZE];
 
 pid_t Fork() {
 	pid_t pid = fork();
@@ -101,6 +118,22 @@ int arg_error_check(char* arg) {
 	return 0;
 }
 
+void cleanup() {
+	flags_struct.input_redir = -1;
+	flags_struct.output_redir = -1;
+	flags_struct.contains_pipe = -1;
+	flags_struct.contains_job = -1;
+
+	memset(args_struct.args, 0, ARGS_SIZE);
+	args_struct.cur_pos = 1;
+
+	io_redir.filename = NULL;
+	io_redir.std_fn = -1;
+
+	memset(pipe_struct.pipe_first_cmd, 0, 2);
+	memset(pipe_struct.pipe_second_cmd, 0, 2);
+}
+
 int input(char in_buff[]) {
 	memset(in_buff, 0, IN_BUFF_SIZE);
 
@@ -116,8 +149,8 @@ char* cur_dir_addr();
 int inbuilt_cmds_flow(int case_no) {
 	switch(case_no) {
 		case 1:
-			io_redir.output_redir = -1;
-			io_redir.input_redir = -1;
+			flags_struct.output_redir = -1;
+			flags_struct.input_redir = -1;
 
 			break;
 
@@ -193,6 +226,57 @@ int pipe_execute() {
 	return CONTINUE_RET;
 }
 
+struct sigaction sa_chld;
+
+void sigchld_handler(int signal) {
+	while (waitpid(-1, NULL, WNOHANG) > 0) {};
+
+	for (int x = 0; x < JOBS_ARR_SIZE; x++) {
+		if (jobs_arr[x].status == 1) {
+			jobs_arr[x].status = -1;
+			break;
+		}
+	}
+}
+
+void jobs_execute() {
+	sigaction(SIGCHLD, &sa_chld, NULL);
+
+	pid_t job_proc = Fork();
+
+	if (job_proc == 0) {
+		Execvp(args_struct.args);
+	} else {
+		for (int x = 0; x < JOBS_ARR_SIZE; x++) {
+			if (jobs_arr[x].pid == 0) {
+				jobs_arr[x].pid = job_proc;
+				jobs_arr[x].status = 1;
+
+				printf("PID: %d, JOB EXECUTING\n", job_proc);
+
+				break;
+			}
+		}
+	}
+
+	return;
+}
+
+void jobs_cmd() {
+	int counter = 0;
+
+	printf("Current Jobs : \n");
+
+	for (int x = 0; x < JOBS_ARR_SIZE; x++) {
+		if (jobs_arr[x].pid != 0) {
+			printf("[%d] PID: %d\n", counter, jobs_arr[x].pid);
+			counter++;
+		}
+	}
+
+	return;
+}
+
 int tokenizing(char in_buff[]) {
 	memset(args_struct.args, 0, ARGS_SIZE);
 
@@ -204,6 +288,11 @@ int tokenizing(char in_buff[]) {
 		return EXIT_RET;
 	}
 
+	if (strcmp(args_struct.args[0], "jobs") == 0) {
+		jobs_cmd();
+		return CONTINUE_RET;
+	}
+
 	int i = 1;
 	char *token = NULL;
 	for (i = 1; i < ARGS_SIZE; i++) {
@@ -213,19 +302,20 @@ int tokenizing(char in_buff[]) {
 
 		args_struct.args[i] = token;
 
-		io_redir.output_redir = strcmp(token, ">");
-		io_redir.input_redir = strcmp(token, "<");
-		pipe_struct.contains_pipe = strcmp(token, "|");
+		flags_struct.output_redir = strcmp(token, ">");
+		flags_struct.input_redir = strcmp(token, "<");
+		flags_struct.contains_pipe = strcmp(token, "|");
+		flags_struct.contains_job = strcmp(token, "&");
 
 
-		if (pipe_struct.contains_pipe == 0) {
+		if (flags_struct.contains_pipe == 0) {
 			token = strtok(NULL, " \n");
 			args_struct.args[i+1] = token;
 			args_struct.cur_pos = i;
 
 			break;
 
-		} else if (io_redir.output_redir == 0 || io_redir.input_redir == 0) {
+		} else if (flags_struct.output_redir == 0 || flags_struct.input_redir == 0) {
 			token = strtok(NULL, " \n");
 			if (arg_error_check(token) == 2) return CONTINUE_RET;
 			io_redir.filename = token;
@@ -234,7 +324,7 @@ int tokenizing(char in_buff[]) {
 			args_struct.cur_pos = i;
 
 			break;
-		} 
+		} else if (flags_struct.contains_job == 0) break;
 	}
 
 	args_struct.args[i] = NULL;
@@ -247,24 +337,26 @@ int tokenizing(char in_buff[]) {
 }
 
 void execute() {
-	if (pipe_struct.contains_pipe == 0) {
-		pipe_struct.contains_pipe = -1;
-
+	if (flags_struct.contains_pipe == 0) {
 		if (inbuilt_cmds_flow(2) == 2) return;
 
 		pipe_execute();
 		return;
 
-	} else if (io_redir.output_redir == 0) {
+	} else if (flags_struct.output_redir == 0) {
 		io_redir.std_fn = STDOUT_FILENO;
 
 		inbuilt_cmds_flow(1);
 
-	} else if (io_redir.input_redir == 0) {
+	} else if (flags_struct.input_redir == 0) {
 		io_redir.std_fn = STDIN_FILENO;
 
 		inbuilt_cmds_flow(1);
 
+	} else if (flags_struct.contains_job == 0) {
+		jobs_execute();
+
+		return;
 	}
 
 	pid_t child = Fork();
@@ -310,23 +402,35 @@ char* cur_dir_addr() {
 	}
 }
 
-struct sigaction sa;
+struct sigaction sa_int;
 
 void sigint_handler(int sig) {}
 
 int main() {
-	sa.sa_handler = sigint_handler;
-	sigemptyset(&sa.sa_mask);
-	sa.sa_flags = 0;
-	sigaction(SIGINT, &sa, NULL);
+	sa_int.sa_handler = sigint_handler;
+	sigemptyset(&sa_int.sa_mask);
+	sa_int.sa_flags = 0;
+	sigaction(SIGINT, &sa_int, NULL);
+
+	sa_chld.sa_handler = sigchld_handler;
+	sigemptyset(&sa_chld.sa_mask);
+	sa_chld.sa_flags = 0;
 
 	char in_buff[IN_BUFF_SIZE];
 
 	path_struct.cur_dir = cur_dir_addr();
 
 	while (1) {
-		io_redir.filename = NULL;
-		io_redir.std_fn = -1;
+		cleanup();
+
+		for (int x = 0; x < JOBS_ARR_SIZE; x++) {
+			if (jobs_arr[x].status == -1) {
+				printf("PID: %d, JOB EXECUTED\n", jobs_arr[x].pid);
+				fflush(stdout);
+
+				memset(&jobs_arr[x], 0, sizeof(jobs_arr[x]));
+			}
+		}
 
 		if (path_struct.cur_dir != NULL) {
 			printf("(%s)#: ", path_struct.cur_dir);
